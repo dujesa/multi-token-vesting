@@ -1,18 +1,26 @@
-use core::mem::size_of;
-use pinocchio::{account_info::{AccountInfo, Ref, RefMut}, program_error::ProgramError, pubkey::Pubkey, sysvars::{Sysvar, clock::Clock}};
 use crate::Discriminator;
+use core::mem::size_of;
+use pinocchio::{
+    account_info::{AccountInfo, Ref, RefMut},
+    program_error::ProgramError,
+    pubkey::Pubkey,
+    sysvars::{clock::Clock, Sysvar},
+};
 
+// it is good practice to save the bump on the account state when using PDAs, this way we can verify the seeds and bump when loading the account in a more performant way
 #[repr(C)]
 pub struct Schedule {
-    pub mint: Pubkey,           //32
-    pub authority: Pubkey,      //32
-    pub vault: Pubkey,          //32
-    pub seed: [u8; 8],          //8
-    pub start: u64,             //8
-    pub cliff_duration: u64,    //8
-    pub step_duration: u64,     //8
-    pub total_duration: u64,    //8
-    pub discriminator: u8,      //1
+    pub mint: Pubkey,      //32
+    pub authority: Pubkey, //32
+    // We don't need to store vault on the account state, it could just be derived as an associated token account
+    pub vault: Pubkey,       //32
+    pub seed: [u8; 8],       //8
+    pub start: u64,          //8
+    pub cliff_duration: u64, //8
+    pub step_duration: u64,  //8
+    pub total_duration: u64, //8
+    // the discriminator is usually stored in the first byte of the account data
+    pub discriminator: u8, //1
 }
 
 impl Discriminator for Schedule {
@@ -41,34 +49,54 @@ impl Schedule {
         if account_info.owner() != &crate::ID {
             return Err(ProgramError::InvalidAccountOwner);
         }
-        Ok(RefMut::map(account_info.try_borrow_mut_data()?, |bytes| unsafe {
-            &mut *(bytes.as_ptr() as *mut Schedule)
-        }))
+        Ok(RefMut::map(
+            account_info.try_borrow_mut_data()?,
+            |bytes| unsafe { &mut *(bytes.as_ptr() as *mut Schedule) },
+        ))
     }
     #[inline(always)]
-    pub fn mint(&self) -> &Pubkey { &self.mint }
+    pub fn mint(&self) -> &Pubkey {
+        &self.mint
+    }
     #[inline(always)]
-    pub fn authority(&self) -> &Pubkey { &self.authority }
+    pub fn authority(&self) -> &Pubkey {
+        &self.authority
+    }
     #[inline(always)]
-    pub fn vault(&self) -> &Pubkey { &self.vault }
+    pub fn vault(&self) -> &Pubkey {
+        &self.vault
+    }
     #[inline(always)]
-    pub fn seed(&self) -> u64 { u64::from_le_bytes(self.seed) }
+    pub fn seed(&self) -> u64 {
+        u64::from_le_bytes(self.seed)
+    }
     #[inline(always)]
-    pub fn start(&self) -> u64 { self.start }
+    pub fn start(&self) -> u64 {
+        self.start
+    }
     #[inline(always)]
-    pub fn cliff_duration(&self) -> u64 { self.cliff_duration }
+    pub fn cliff_duration(&self) -> u64 {
+        self.cliff_duration
+    }
     #[inline(always)]
-    pub fn step_duration(&self) -> u64 { self.step_duration }
+    pub fn step_duration(&self) -> u64 {
+        self.step_duration
+    }
     #[inline(always)]
-    pub fn total_duration(&self) -> u64 { self.total_duration }
+    pub fn total_duration(&self) -> u64 {
+        self.total_duration
+    }
     #[inline(always)]
-    pub fn discriminator(&self) -> u8 { self.discriminator }
+    pub fn discriminator(&self) -> u8 {
+        self.discriminator
+    }
     #[inline(always)]
     pub fn is_cliff_completed(&self) -> bool {
         Clock::get().unwrap().unix_timestamp as u64 > self.cliff_duration + self.start
     }
     #[inline(always)]
     pub fn steps_passed_percentage(&self) -> f32 {
+        // Never use float in on-chain logic, use BPS with integers instead
         if !self.is_cliff_completed() {
             return 0.0;
         }
@@ -129,13 +157,13 @@ impl Schedule {
     #[inline(always)]
     pub fn set_inner(
         &mut self,
-        mint: Pubkey,       
-        authority: Pubkey,  
-        vault: Pubkey,      
-        seed: u64,      
-        start: u64,         
+        mint: Pubkey,
+        authority: Pubkey,
+        vault: Pubkey,
+        seed: u64,
+        start: u64,
         cliff_duration: u64,
-        step_duration: u64, 
+        step_duration: u64,
         total_duration: u64,
     ) -> Result<(), ProgramError> {
         self.set_mint(mint);

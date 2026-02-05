@@ -15,6 +15,7 @@ impl ProgramAccount {
             return Err(ProgramError::InvalidAccountOwner);
         }
 
+        // we can check the discriminator byte to make sure the account is of the expected type instead of checking the length
         if account.data_len().ne(&T::LEN) {
             return Err(ProgramError::InvalidAccountData);
         }
