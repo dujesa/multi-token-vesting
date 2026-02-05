@@ -1,6 +1,7 @@
 use litesvm::LiteSVM;
 use litesvm_token::{CreateAssociatedTokenAccount, CreateMint, MintTo, spl_token};
 use solana_sdk::{
+    account::ReadableAccount,
     instruction::{AccountMeta, Instruction},
     pubkey::Pubkey,
     signature::Keypair,
@@ -40,6 +41,13 @@ fn get_participant_pda(participant: &Pubkey, schedule: &Pubkey) -> (Pubkey, u8) 
 
 fn get_ata(owner: &Pubkey, mint: &Pubkey) -> Pubkey {
     spl_associated_token_account::get_associated_token_address(owner, mint)
+}
+
+fn get_token_balance(svm: &LiteSVM, ata: &Pubkey) -> u64 {
+    let account = svm.get_account(ata).expect("ATA not found");
+    let data = account.data();
+    // Token account balance is at bytes 64-72
+    u64::from_le_bytes(data[64..72].try_into().unwrap())
 }
 
 fn build_initialize_ix(
@@ -339,4 +347,133 @@ fn test_claim_double_claim_fails() {
     );
     let result2 = svm.send_transaction(tx2);
     assert!(result2.is_err(), "Double claim should fail");
+}
+
+#[test]
+fn test_claim_right_after_cliff() {
+    let mut svm = setup_svm();
+
+    let authority = Keypair::new();
+    let participant = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&participant.pubkey(), 10_000_000_000).unwrap();
+
+    svm.set_sysvar(&Clock { unix_timestamp: 500, ..Default::default() });
+
+    let seed: u64 = 5000;
+    let allocation: u64 = 1_000_000_000;
+    let (schedule, vault, mint, vested_participant_pda) =
+        setup_vesting(&mut svm, &authority, &participant, seed, allocation);
+
+    // Clock: 1101 (just past cliff, before step 2)
+    // start=1000, cliff=100 -> cliff ends at 1100
+    // Periods passed: 1 (cliff only)
+    // Expected: 1/5 = 20% -> 200_000_000 tokens
+    svm.set_sysvar(&Clock { unix_timestamp: 1101, ..Default::default() });
+
+    let participant_ata = get_ata(&participant.pubkey(), &mint);
+    CreateAssociatedTokenAccount::new(&mut svm, &participant, &mint)
+        .owner(&participant.pubkey())
+        .send()
+        .unwrap();
+
+    let ix = build_claim_ix(
+        &participant.pubkey(), &vested_participant_pda, &participant_ata,
+        &vault, &schedule, &mint,
+    );
+    let tx = Transaction::new_signed_with_payer(
+        &[ix], Some(&participant.pubkey()), &[&participant], svm.latest_blockhash(),
+    );
+
+    let result = svm.send_transaction(tx);
+    assert!(result.is_ok(), "Claim should succeed: {:?}", result.err());
+
+    let balance = get_token_balance(&svm, &participant_ata);
+    assert_eq!(balance, 200_000_000, "Should receive 20% (1/5) of allocation");
+}
+
+#[test]
+fn test_claim_mid_vesting() {
+    let mut svm = setup_svm();
+
+    let authority = Keypair::new();
+    let participant = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&participant.pubkey(), 10_000_000_000).unwrap();
+
+    svm.set_sysvar(&Clock { unix_timestamp: 500, ..Default::default() });
+
+    let seed: u64 = 6000;
+    let allocation: u64 = 1_000_000_000;
+    let (schedule, vault, mint, vested_participant_pda) =
+        setup_vesting(&mut svm, &authority, &participant, seed, allocation);
+
+    // Clock: 1200 (step 3 complete)
+    // start=1000, cliff=100, step=50
+    // cliff ends at 1100, step 2 at 1150, step 3 at 1200
+    // Periods passed: 3 (cliff + 2 steps)
+    // Expected: 3/5 = 60% -> 600_000_000 tokens
+    svm.set_sysvar(&Clock { unix_timestamp: 1200, ..Default::default() });
+
+    let participant_ata = get_ata(&participant.pubkey(), &mint);
+    CreateAssociatedTokenAccount::new(&mut svm, &participant, &mint)
+        .owner(&participant.pubkey())
+        .send()
+        .unwrap();
+
+    let ix = build_claim_ix(
+        &participant.pubkey(), &vested_participant_pda, &participant_ata,
+        &vault, &schedule, &mint,
+    );
+    let tx = Transaction::new_signed_with_payer(
+        &[ix], Some(&participant.pubkey()), &[&participant], svm.latest_blockhash(),
+    );
+
+    let result = svm.send_transaction(tx);
+    assert!(result.is_ok(), "Claim should succeed: {:?}", result.err());
+
+    let balance = get_token_balance(&svm, &participant_ata);
+    assert_eq!(balance, 600_000_000, "Should receive 60% (3/5) of allocation");
+}
+
+#[test]
+fn test_claim_after_vesting_complete() {
+    let mut svm = setup_svm();
+
+    let authority = Keypair::new();
+    let participant = Keypair::new();
+    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
+    svm.airdrop(&participant.pubkey(), 10_000_000_000).unwrap();
+
+    svm.set_sysvar(&Clock { unix_timestamp: 500, ..Default::default() });
+
+    let seed: u64 = 7000;
+    let allocation: u64 = 1_000_000_000;
+    let (schedule, vault, mint, vested_participant_pda) =
+        setup_vesting(&mut svm, &authority, &participant, seed, allocation);
+
+    // Clock: 1400 (past end)
+    // start=1000, total=300 -> ends at 1300
+    // Expected: 100% -> 1_000_000_000 tokens
+    svm.set_sysvar(&Clock { unix_timestamp: 1400, ..Default::default() });
+
+    let participant_ata = get_ata(&participant.pubkey(), &mint);
+    CreateAssociatedTokenAccount::new(&mut svm, &participant, &mint)
+        .owner(&participant.pubkey())
+        .send()
+        .unwrap();
+
+    let ix = build_claim_ix(
+        &participant.pubkey(), &vested_participant_pda, &participant_ata,
+        &vault, &schedule, &mint,
+    );
+    let tx = Transaction::new_signed_with_payer(
+        &[ix], Some(&participant.pubkey()), &[&participant], svm.latest_blockhash(),
+    );
+
+    let result = svm.send_transaction(tx);
+    assert!(result.is_ok(), "Claim should succeed: {:?}", result.err());
+
+    let balance = get_token_balance(&svm, &participant_ata);
+    assert_eq!(balance, 1_000_000_000, "Should receive 100% of allocation");
 }

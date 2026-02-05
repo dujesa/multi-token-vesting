@@ -70,7 +70,7 @@ impl Schedule {
     #[inline(always)]
     pub fn steps_passed_percentage(&self) -> f32 {
         if !self.is_cliff_completed() {
-            return 0.0; 
+            return 0.0;
         }
 
         let now = Clock::get().unwrap().unix_timestamp as u64;
@@ -79,11 +79,15 @@ impl Schedule {
             return 1.0;
         }
 
-        let elapsed = (now - self.start()) as f32;
-        let periods_passed = elapsed / self.step_duration() as f32;
-        let total_periods = self.total_duration() as f32 / self.step_duration() as f32;
+        // Cliff = 1 period, remaining vesting periods after cliff
+        let vesting_duration = self.total_duration() - self.cliff_duration();
+        let steps_after_cliff = vesting_duration / self.step_duration();
+        let total_periods = 1.0 + steps_after_cliff as f32; // cliff + steps
 
-        return periods_passed / total_periods;
+        let elapsed_after_cliff = (now - self.start() - self.cliff_duration()) as f32;
+        let periods_after_cliff = (elapsed_after_cliff / self.step_duration() as f32).floor();
+
+        (1.0 + periods_after_cliff) / total_periods // 1 for cliff + periods passed
     }
 
     #[inline(always)]
