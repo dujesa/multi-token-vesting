@@ -134,6 +134,7 @@ fn build_claim_ix(
             AccountMeta::new_readonly(*mint, false),
             AccountMeta::new_readonly(SYSTEM_PROGRAM_ID, false),
             AccountMeta::new_readonly(spl_token::ID, false),
+            AccountMeta::new_readonly(spl_associated_token_account::ID, false),
         ],
         data: vec![2u8],
     }

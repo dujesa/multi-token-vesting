@@ -18,7 +18,6 @@ pub struct InitializeAccounts<'a> {
     pub vault: &'a AccountInfo, //ata
     pub system_program: &'a AccountInfo,
     pub token_program: &'a AccountInfo,
-    pub associated_token_account_program: &'a AccountInfo,
 }
 impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
     type Error = ProgramError;
@@ -31,8 +30,11 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
 
         SignerAccount::check(authority)?;
         MintAccount::check(mint)?;
-        // todo - sergije: do i need to check token and system programs account keys?
+
+        // do i need to check token and system programs account keys?
         // yes, we should check the the program keys that we cpi into otherwise an attacker could pass in malicious program accounts and cause havoc
+        ProgramAccount::check_program(system_program, &pinocchio_system::ID)?;
+        ProgramAccount::check_program(token_program, &pinocchio_token::ID)?;
 
         AssociatedTokenAccount::init_if_needed(
             vault,
@@ -50,16 +52,15 @@ impl<'a> TryFrom<&'a [AccountInfo]> for InitializeAccounts<'a> {
             vault,
             system_program,
             token_program,
-            associated_token_account_program,
         })
     }
 }
 #[repr(C, packed)]
 pub struct InitializeInstructionData {
-    pub start_timestamp: u64,
-    pub cliff_duration: u64,
-    pub step_duration: u64,
-    pub total_duration: u64,
+    pub start_timestamp: i64,
+    pub cliff_duration: i64,
+    pub step_duration: i64,
+    pub total_duration: i64,
     pub seed: u64,
     // be careful with passing in bumps through instruction data, here thanks to verify_seeds we are safe but in general its better to avoid passing bumps through instruction data and just calculate them on the fly especially since we are already doing find_program_addres so we don't waste any extra CUs
     pub bump: u8,
@@ -71,28 +72,21 @@ impl<'a> TryFrom<&'a [u8]> for InitializeInstructionData {
             return Err(ProgramError::InvalidInstructionData);
         }
 
-        let start_timestamp = u64::from_le_bytes(data[0..8].try_into().unwrap());
-        let cliff_duration = u64::from_le_bytes(data[8..16].try_into().unwrap());
-        let step_duration = u64::from_le_bytes(data[16..24].try_into().unwrap());
-        let total_duration = u64::from_le_bytes(data[24..32].try_into().unwrap());
+        let start_timestamp = i64::from_le_bytes(data[0..8].try_into().unwrap());
+        let cliff_duration = i64::from_le_bytes(data[8..16].try_into().unwrap());
+        let step_duration = i64::from_le_bytes(data[16..24].try_into().unwrap());
+        let total_duration = i64::from_le_bytes(data[24..32].try_into().unwrap());
         let seed = u64::from_le_bytes(data[32..40].try_into().unwrap());
         let bump = u8::from_le_bytes(data[40..41].try_into().unwrap());
 
-        // is there a reason for this check?
-        if seed == 0 {
-            return Err(ProgramError::InvalidInstructionData);
-        }
+        let unix_timestamp = Clock::get()?.unix_timestamp;
 
-        let unix_timestamp = Clock::get()?.unix_timestamp as u64;
-
-        // I think checking start_timestamp > 0 is also not necessary
-        if start_timestamp > 0 && start_timestamp < unix_timestamp {
+        if start_timestamp < unix_timestamp {
             return Err(PinocchioError::StartTimeInvalid.into());
         }
 
-        // total duration and step_duration are u64 and can't be negative, so we only need to check if it's 0
-        if total_duration <= 0
-            || step_duration <= 0
+        if total_duration == 0
+            || step_duration == 0
             || (total_duration - cliff_duration) % step_duration != 0
         {
             return Err(PinocchioError::DurationInvalid.into());
@@ -153,12 +147,12 @@ impl<'a> Initialize<'a> {
         schedule_state.set_inner(
             *self.accounts.mint.key(),
             *self.accounts.authority.key(),
-            *self.accounts.vault.key(),
             self.instruction_data.seed,
             self.instruction_data.start_timestamp,
             self.instruction_data.cliff_duration,
             self.instruction_data.step_duration,
             self.instruction_data.total_duration,
+            self.instruction_data.bump,
         )?;
 
         Ok(())

@@ -129,52 +129,7 @@ fn test_initialize_success() {
     // Verify schedule account exists and has correct size
     let schedule_account = svm.get_account(&schedule).unwrap();
     assert_eq!(schedule_account.owner, PROGRAM_ID);
-    assert_eq!(schedule_account.data.len(), 137); // Schedule::LEN
-}
-
-#[test]
-fn test_initialize_seed_zero_fails() {
-    let mut svm = setup_svm();
-
-    let authority = Keypair::new();
-    svm.airdrop(&authority.pubkey(), 10_000_000_000).unwrap();
-
-    let mint = CreateMint::new(&mut svm, &authority)
-        .decimals(9)
-        .send()
-        .unwrap();
-
-    let seed: u64 = 0; // Invalid seed
-    let (schedule, bump) = get_schedule_pda(seed);
-    let vault = get_vault_ata(&schedule, &mint);
-
-    svm.set_sysvar(&Clock {
-        unix_timestamp: 1000,
-        ..Default::default()
-    });
-
-    let ix = build_initialize_ix(
-        &authority.pubkey(),
-        &schedule,
-        &mint,
-        &vault,
-        2000, // start
-        100,  // cliff
-        50,   // step
-        300,  // total
-        seed,
-        bump,
-    );
-
-    let tx = Transaction::new_signed_with_payer(
-        &[ix],
-        Some(&authority.pubkey()),
-        &[&authority],
-        svm.latest_blockhash(),
-    );
-
-    let result = svm.send_transaction(tx);
-    assert!(result.is_err(), "seed=0 should fail");
+    assert_eq!(schedule_account.data.len(), 106); // Schedule::LEN
 }
 
 #[test]

@@ -1,9 +1,9 @@
-use std::ops::Mul;
+use std::ops::{Div, Mul};
 
 use pinocchio::{ProgramResult, account_info::AccountInfo, instruction::{Seed, Signer}, program_error::ProgramError};
 use pinocchio_token::{instructions::Transfer, state::TokenAccount};
 
-use crate::{AssociatedTokenAccount, MintAccount, PinocchioError, ProgramAccount, Schedule, SignerAccount, VestedParticipant, vested_participant};
+use crate::{AssociatedTokenAccount, MintAccount, PinocchioError, ProgramAccount, Schedule, SignerAccount, VestedParticipant};
 
 pub struct ClaimAccounts<'a> {
     pub participant_wallet: &'a AccountInfo, //signer 
@@ -14,6 +14,7 @@ pub struct ClaimAccounts<'a> {
     pub mint: &'a AccountInfo,
     pub system_program: &'a AccountInfo,
     pub token_program: &'a AccountInfo,
+    pub associated_token_account_program: &'a AccountInfo,
 }
 impl<'a> TryFrom<&'a [AccountInfo]> for ClaimAccounts<'a> {
     type Error = ProgramError;
@@ -26,7 +27,8 @@ impl<'a> TryFrom<&'a [AccountInfo]> for ClaimAccounts<'a> {
             schedule,
             mint,
             system_program,
-            token_program
+            token_program,
+            associated_token_account_program
         ] = accounts else {
             return Err(ProgramError::NotEnoughAccountKeys)
         };
@@ -36,7 +38,7 @@ impl<'a> TryFrom<&'a [AccountInfo]> for ClaimAccounts<'a> {
         ProgramAccount::check::<Schedule>(schedule)?;
         MintAccount::check(mint)?;
 
-        Ok(Self { participant_wallet, vested_participant, participant_ata, vault, schedule, mint, system_program, token_program })
+        Ok(Self { participant_wallet, vested_participant, participant_ata, vault, schedule, mint, system_program, token_program, associated_token_account_program })
     }
 }
 pub struct Claim<'a> {
@@ -101,11 +103,14 @@ impl<'a> Claim<'a> {
     pub const DISCRIMINATOR: &'a u8 = &2;
     pub fn process(&mut self) -> ProgramResult {
         let (claim_amount, seed) = {
+            const BPS_DENOMINATOR: u64 = 10_000;     
 
             let schedule = Schedule::load(self.accounts.schedule)?;
             let vested_participant = VestedParticipant::load(self.accounts.vested_participant)?;
             
-            let possible_claim_amount = schedule.steps_passed_percentage().mul(vested_participant.allocated_amount() as f32) as u64;
+            let possible_claim_amount = vested_participant.allocated_amount()
+                    .mul(schedule.steps_passed_percentage(BPS_DENOMINATOR) as u64)
+                    .div(BPS_DENOMINATOR);
             
             let claim_amount = possible_claim_amount - vested_participant.claimed_amount();
             if claim_amount == 0 {

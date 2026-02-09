@@ -2,17 +2,17 @@ use core::mem::size_of;
 use pinocchio::{account_info::{AccountInfo, Ref, RefMut}, program_error::ProgramError, pubkey::Pubkey};
 use crate::Discriminator;
 
-#[repr(C)]
+#[repr(C, packed)]
 pub struct VestedParticipant {
+    pub discriminator: u8,       //1
     pub schedule: Pubkey,       //32
     pub participant: Pubkey,    //32
     pub allocated_amount: u64,  //8
     pub claimed_amount: u64,    //8
-    pub discriminator: u8       //1
 }
 
 impl Discriminator for VestedParticipant {
-    const LEN: usize = 2 * size_of::<Pubkey>() + 2 * size_of::<u64>() + size_of::<u8>();
+    const LEN: usize = size_of::<u8>() + 2 * size_of::<Pubkey>() + 2 * size_of::<u64>();
     const DISCRIMINATOR: u8 = 1;
 }
 

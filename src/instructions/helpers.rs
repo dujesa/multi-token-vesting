@@ -1,5 +1,5 @@
 use core::mem::size_of;
-use pinocchio::{ProgramResult, account_info::AccountInfo, instruction::{Seed, Signer}, program_error::ProgramError, pubkey::find_program_address, sysvars::{Sysvar, rent::Rent}};
+use pinocchio::{ProgramResult, account_info::AccountInfo, instruction::{Seed, Signer}, program_error::ProgramError, pubkey::{Pubkey, find_program_address}, sysvars::{Sysvar, rent::Rent}};
 use pinocchio_associated_token_account::instructions::Create;
 use pinocchio_system::instructions::CreateAccount;
 
@@ -16,10 +16,18 @@ impl ProgramAccount {
         }
 
         // we can check the discriminator byte to make sure the account is of the expected type instead of checking the length
-        if account.data_len().ne(&T::LEN) {
+        let data = account.try_borrow_data()?;
+        if data.first() != Some(&T::DISCRIMINATOR) {
             return Err(ProgramError::InvalidAccountData);
         }
 
+        Ok(())
+    }
+
+    pub fn check_program(account: &AccountInfo, expected: &Pubkey) -> Result<(), ProgramError> {
+        if *account.key() != *expected {
+            return Err(ProgramError::IncorrectProgramId);
+        }
         Ok(())
     }
 
@@ -107,7 +115,7 @@ impl MintAccount {
 
 pub struct TokenAccount;
 impl TokenAccount {
-    pub fn check(account: AccountInfo) -> Result<(), ProgramError> {
+    pub fn check(account: &AccountInfo) -> Result<(), ProgramError> {
         if !account.is_owned_by(&pinocchio_token::ID) {
             return Err(ProgramError::InvalidAccountOwner);
         }
@@ -126,7 +134,7 @@ impl AssociatedTokenAccount {
         mint: &AccountInfo,
         token_program: &AccountInfo,
     ) -> Result<(), ProgramError> {
-        TokenAccount::check(*account)?;
+        TokenAccount::check(account)?;
         if find_program_address(
             &[authority.key(), token_program.key(), mint.key()],
             &pinocchio_associated_token_account::ID
@@ -163,7 +171,7 @@ impl AssociatedTokenAccount {
         system_program: &AccountInfo,
         token_program: &AccountInfo,
     ) -> ProgramResult {
-        match Self::check(account, payer, mint, token_program) {
+        match Self::check(account, owner, mint, token_program) {
             Ok(_) => Ok(()),
             Err(_) => Self::init(account, mint, payer, owner, system_program, token_program)
         }
